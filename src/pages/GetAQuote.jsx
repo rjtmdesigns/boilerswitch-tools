@@ -415,9 +415,9 @@ export default function GetAQuote() {
 
               <div style={{ background:"#fff", border:"1px solid #E4DED6", borderRadius:16, padding:"18px 22px", marginBottom:14, textAlign:"center" }}>
                 <div style={{ display:"flex", gap:2, marginBottom:4 }}>{[1,2,3,4,5].map(i => <svg key={i} width="18" height="18" viewBox="0 0 24 24" fill="#F59E0B" stroke="#F59E0B" strokeWidth="1"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>)}</div>
-                <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:22, color:"#111827", marginBottom:3 }}>4.8 / 5</p>
-                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#9CA3AF" }}>2,400+ homeowner reviews</p>
-                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#1B4332", marginTop:5, fontWeight:600 }}>Rated Excellent on Trustpilot</p>
+                <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:22, color:"#111827", marginBottom:3 }}>Trusted Service</p>
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#9CA3AF" }}>UK homeowner reviews</p>
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#1B4332", marginTop:5, fontWeight:600 }}>Verified BoilerSwitch reviews</p>
               </div>
 
               <div style={{ background:"#F0F9F4", border:"1px solid #BBF7D0", borderRadius:16, padding:"18px 22px" }}>
