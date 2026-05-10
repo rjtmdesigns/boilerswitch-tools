@@ -1,522 +1,528 @@
-import { useState, useEffect, useRef } from "react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { useState } from "react";
 import {
-  Share2, Mail, Download, Check, ChevronDown, ChevronUp,
-  Flame, Droplets, Zap, ThermometerSun, BatteryFull,
-  BarChart2, Table, AlertCircle, Lightbulb, TrendingUp, ClipboardList
+  Flame, Zap, HelpCircle, CheckCircle2, XCircle,
+  BatteryCharging, ShieldCheck, Wind, Gauge,
+  Home, Building2, ThermometerSun, Droplets,
+  BatteryFull, Leaf, Mail, TrendingUp,
+  ClipboardList, MessageCircle, Lightbulb, Lock
 } from "lucide-react";
 
-// ─── Calculation engine ───────────────────────────────────────────────────────
-
-const HEATING_COSTS = {
-  gas:      { annual: 1450, label: "Gas boiler",      colour: "#ef4444", icon: <Flame size={22} strokeWidth={1.75} color="#ef4444" /> },
-  oil:      { annual: 1900, label: "Oil boiler",      colour: "#f97316", icon: <Droplets size={22} strokeWidth={1.75} color="#f97316" /> },
-  electric: { annual: 2400, label: "Electric storage", colour: "#eab308", icon: <Zap size={22} strokeWidth={1.75} color="#eab308" /> },
+// ─── Icon map — Lucide only, no emojis ───────────────────────────────────────
+const IC = {
+  gas:                <Flame size={26} strokeWidth={1.75} />,
+  oil:                <Droplets size={26} strokeWidth={1.75} />,
+  electric:           <Zap size={26} strokeWidth={1.75} />,
+  heat_pump:          <ThermometerSun size={26} strokeWidth={1.75} />,
+  battery:            <BatteryFull size={26} strokeWidth={1.75} />,
+  both:               <BatteryCharging size={26} strokeWidth={1.75} />,
+  good_insulation:    <ShieldCheck size={26} strokeWidth={1.75} />,
+  average_insulation: <Gauge size={26} strokeWidth={1.75} />,
+  poor_insulation:    <Wind size={26} strokeWidth={1.75} />,
+  yes:                <CheckCircle2 size={26} strokeWidth={1.75} />,
+  no:                 <XCircle size={26} strokeWidth={1.75} />,
+  unsure:             <HelpCircle size={26} strokeWidth={1.75} />,
+  leaf:               <Leaf size={26} strokeWidth={1.75} />,
 };
 
-const GRANT = { gas: 7500, oil: 9000, electric: 7500 };
+// ─── Steps ───────────────────────────────────────────────────────────────────
+const STEPS = [
+  {
+    id: "property",
+    phase: "eligibility",
+    question: "What type of property do you own?",
+    hint: "This determines which heat pump types are suitable",
+    textCards: true,
+    options: [
+      { value: "detached",  label: "Detached House",    desc: "All heat pump types available" },
+      { value: "semi",      label: "Semi-Detached",     desc: "Air source usually the best fit" },
+      { value: "terraced",  label: "Terraced House",    desc: "Works well with good insulation" },
+      { value: "flat",      label: "Flat / Apartment",  desc: "New air-to-air options available" },
+    ],
+  },
+  {
+    id: "heating",
+    phase: "eligibility",
+    question: "What's your current heating system?",
+    hint: "Your existing system affects which grants you qualify for",
+    options: [
+      { value: "gas",      label: "Gas Boiler",          note: "Qualifies for £7,500 BUS grant",   icon: "gas" },
+      { value: "oil",      label: "Oil Boiler",           note: "Qualifies for £9,000 BUS grant",   icon: "oil" },
+      { value: "electric", label: "Electric Heating",     note: "ECO4 route may apply",             icon: "electric" },
+      { value: "other",    label: "Other / Not sure",     note: "We'll find the right option",      icon: "unsure" },
+    ],
+  },
+  {
+    id: "benefits",
+    phase: "eligibility",
+    question: "Do you receive any government benefits?",
+    hint: "Benefits recipients may qualify for free installation via ECO4",
+    options: [
+      { value: "yes",    label: "Yes — I receive benefits",  note: "May qualify for free install",   icon: "yes" },
+      { value: "no",     label: "No — I don't",              note: "BUS grant still available",      icon: "no" },
+      { value: "unsure", label: "Not sure",                  note: "We'll check all options",        icon: "unsure" },
+    ],
+  },
+  {
+    id: "size",
+    phase: "cost",
+    question: "How large is your property?",
+    hint: "Property size determines the heat pump capacity you'll need",
+    textCards: true,
+    options: [
+      { value: "small",   label: "1–2 Bedrooms",  desc: "Typically needs a 5–8 kW system" },
+      { value: "medium",  label: "3 Bedrooms",    desc: "Typically needs an 8–11 kW system" },
+      { value: "large",   label: "4 Bedrooms",    desc: "Typically needs an 11–14 kW system" },
+      { value: "xlarge",  label: "5+ Bedrooms",   desc: "Typically needs a 14 kW+ system" },
+    ],
+  },
+  {
+    id: "insulation",
+    phase: "cost",
+    question: "How well insulated is your home?",
+    hint: "Good insulation makes a heat pump significantly more cost-effective",
+    options: [
+      { value: "good",    label: "Well insulated",      note: "Double glazing, cavity wall",     icon: "good_insulation" },
+      { value: "average", label: "Average insulation",  note: "Some upgrades done",              icon: "average_insulation" },
+      { value: "poor",    label: "Poorly insulated",    note: "Older home, single glazing",      icon: "poor_insulation" },
+      { value: "unsure",  label: "Not sure",            note: "We'll factor in typical levels",  icon: "unsure" },
+    ],
+  },
+  {
+    id: "postcode",
+    phase: "local",
+    question: "What's your postcode?",
+    hint: "We use this to find MCS-certified installers near you",
+    isText: true,
+    placeholder: "e.g. M1 1AE",
+  },
+];
 
-const HP_RUNNING = {
-  standard: { annual: 1300, label: "Standard tariff",     note: "Average UK electricity price" },
-  heatpump: { annual: 950,  label: "Heat pump tariff",    note: "e.g. Octopus Cosy, E.ON Drive" },
+// ─── Calculation helpers ──────────────────────────────────────────────────────
+const getCostRange = (size, insulation) => {
+  const base = { small: [8000,11000], medium: [10000,13000], large: [12000,15000], xlarge: [14000,18000] };
+  const add  = { poor: 1500, average: 500, good: 0, unsure: 750 };
+  const [lo, hi] = base[size] || base.medium;
+  const a = add[insulation] || 0;
+  return [lo + a, hi + a];
 };
-
-const INSTALL_COST = {
-  small:  { low: 8000,  high: 11000, label: "Small (1–2 bed)" },
-  medium: { low: 10000, high: 13000, label: "Medium (3 bed)" },
-  large:  { low: 12000, high: 15000, label: "Large (4 bed)" },
-  xlarge: { low: 14000, high: 18000, label: "Very large (5+)" },
+const getGrant    = h => h === "oil" ? 9000 : h === "electric" ? 0 : 7500;
+const getSavings  = (h, s) => {
+  const b = { small:[200,500], medium:[350,700], large:[500,900], xlarge:[700,1200] };
+  const [lo, hi] = b[s] || b.medium;
+  if (h === "oil")      return [lo+200, hi+400];
+  if (h === "electric") return [lo-50,  hi+100];
+  return [lo, hi];
 };
+const isEligible  = h => h !== "electric";
+const fmt         = n => `£${n.toLocaleString("en-GB")}`;
 
-const buildData = (heating, size, tariff, years = 15) => {
-  const boilerAnnual    = HEATING_COSTS[heating].annual;
-  const hpAnnual        = HP_RUNNING[tariff].annual;
-  const grant           = GRANT[heating];
-  const installMid      = (INSTALL_COST[size].low + INSTALL_COST[size].high) / 2;
-  const netInstall      = Math.max(0, installMid - grant);
-  const boilerReplace   = 2200; // new boiler cost at year 10
+// ─── Main component ───────────────────────────────────────────────────────────
+export default function EligibilityCalculator() {
+  const [step, setStep]               = useState(0);
+  const [answers, setAnswers]         = useState({});
+  const [selecting, setSelecting]     = useState(null);
+  const [phase, setPhase]             = useState("tool");
+  const [email, setEmail]             = useState("");
+  const [emailError, setEmailError]   = useState("");
+  const [postcodeInput, setPostcode]  = useState("");
+  const [postcodeError, setPostcodeError] = useState("");
 
-  const data = [];
-  let boilerCumulative = 0;
-  let hpCumulative     = netInstall;
+  const cur       = STEPS[step];
+  const total     = STEPS.length;
+  const pct       = Math.round(((step + 1) / total) * 100);
+  const grant     = getGrant(answers.heating);
+  const eligible  = isEligible(answers.heating);
+  const [cLo, cHi] = answers.size ? getCostRange(answers.size, answers.insulation) : [0,0];
+  const netLo     = Math.max(0, cLo - grant);
+  const netHi     = Math.max(0, cHi - grant);
+  const [sLo, sHi] = answers.size ? getSavings(answers.heating, answers.size) : [0,0];
+  const payback   = grant > 0 && sLo > 0
+    ? Math.round(((cLo+cHi)/2 - grant) / ((sLo+sHi)/2))
+    : null;
 
-  for (let yr = 0; yr <= years; yr++) {
-    if (yr > 0) {
-      boilerCumulative += boilerAnnual;
-      hpCumulative     += hpAnnual;
+  const pick = (value) => {
+    if (selecting) return;
+    setSelecting(value);
+    setTimeout(() => {
+      const na = { ...answers, [cur.id]: value };
+      setAnswers(na);
+      setSelecting(null);
+      step < total - 1 ? setStep(step + 1) : setPhase("partial");
+    }, 280);
+  };
+
+  const submitPostcode = () => {
+    const v = postcodeInput.trim().toUpperCase();
+    if (!v) { setPostcodeError("Please enter your postcode"); return; }
+    if (!/^[A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][A-Z]{2}$/i.test(v)) {
+      setPostcodeError("Please enter a valid UK postcode"); return;
     }
-    if (yr === 10) boilerCumulative += boilerReplace;
-
-    data.push({
-      year:    yr === 0 ? "Now" : `Yr ${yr}`,
-      yr,
-      boiler:  Math.round(boilerCumulative),
-      heatpump: Math.round(hpCumulative),
-      saving:  Math.round(boilerCumulative - hpCumulative),
-    });
-  }
-
-  // Find crossover year
-  const crossover = data.find(d => d.yr > 0 && d.heatpump <= d.boiler);
-
-  return { data, netInstall, grant, crossover, boilerAnnual, hpAnnual };
-};
-
-const fmt = n => n < 0
-  ? `-£${Math.abs(n).toLocaleString("en-GB")}`
-  : `£${n.toLocaleString("en-GB")}`;
-
-// ─── Custom tooltip ───────────────────────────────────────────────────────────
-
-const CustomTooltip = ({ active, payload, label, boilerLabel }) => {
-  if (!active || !payload?.length) return null;
-  const boiler = payload.find(p => p.dataKey === "boiler");
-  const hp     = payload.find(p => p.dataKey === "heatpump");
-  const saving = (boiler?.value || 0) - (hp?.value || 0);
-  return (
-    <div style={{ background: "#fff", border: "1px solid #E8E3DB", borderRadius: 10, padding: "14px 18px", minWidth: 180, boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
-      <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#6EE7B7", marginBottom: 8 }}>{label}</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
-          <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#f87171" }}>{boilerLabel}</span>
-          <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#f87171", fontWeight: 600 }}>{fmt(boiler?.value)}</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
-          <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#1B4332" }}>Heat pump</span>
-          <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#1B4332", fontWeight: 600 }}>{fmt(hp?.value)}</span>
-        </div>
-        {saving !== 0 && (
-          <div style={{ borderTop: "1px solid #1B4332", paddingTop: 6, marginTop: 2, display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: saving >= 0 ? "#4ade80" : "#f87171" }}>
-              {saving >= 0 ? "You save" : "Still paying back"}
-            </span>
-            <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: saving >= 0 ? "#4ade80" : "#f87171", fontWeight: 600 }}>
-              {fmt(Math.abs(saving))}
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// ─── Share modal ──────────────────────────────────────────────────────────────
-
-const ShareModal = ({ onClose, heating, size, tariff }) => {
-  const [email, setEmail]     = useState("");
-  const [copied, setCopied]   = useState(false);
-  const [sent, setSent]       = useState(false);
-  const shareUrl = `https://boilerswitch.co.uk/compare?h=${heating}&s=${size}&t=${tariff}`;
-
-  const handleCopy = () => {
-    if (navigator.clipboard) navigator.clipboard.writeText(shareUrl).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    setPostcodeError("");
+    setAnswers({ ...answers, postcode: v });
+    setPhase("partial");
   };
 
-  const handleEmail = () => {
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
-    setSent(true);
+  const submitEmail = () => {
+    if (!email.trim()) { setEmailError("Please enter your email address"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setEmailError("Please enter a valid email address"); return;
+    }
+    setEmailError("");
+    setPhase("confirmed");
   };
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}
-      onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 20, padding: 32, maxWidth: 420, width: "100%", boxShadow: "0 24px 64px rgba(0,0,0,0.3)" }}
-        onClick={e => e.stopPropagation()}>
-        <h3 style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: 20, color: "#111827", marginBottom: 6 }}>Save or share your comparison</h3>
-        <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, color: "#6B7280", marginBottom: 24, lineHeight: 1.6 }}>
-          Send this to a partner, save it for later, or share it with your installer.
-        </p>
-
-        {/* Copy link */}
-        <div style={{ marginBottom: 16 }}>
-          <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Share a link</p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{ flex: 1, padding: "11px 14px", background: "#F8F5F0", border: "1px solid #E4DED6", borderRadius: 8, fontFamily: "'Inter',sans-serif", fontSize: 12, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {shareUrl}
-            </div>
-            <button onClick={handleCopy} style={{ background: copied ? "#1B4332" : "#F0F7F4", border: `1.5px solid ${copied ? "#1B4332" : "#BBF7D0"}`, borderRadius: 8, padding: "0 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, transition: "all 0.2s", whiteSpace: "nowrap" }}>
-              {copied ? <Check size={14} color="#fff" strokeWidth={2} /> : <Share2 size={14} color="#1B4332" strokeWidth={1.75} />}
-              <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 600, color: copied ? "#fff" : "#1B4332" }}>
-                {copied ? "Copied!" : "Copy"}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {/* Email */}
-        <div style={{ marginBottom: 24 }}>
-          <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Email me this comparison</p>
-          {sent ? (
-            <div style={{ background: "#F0F9F4", border: "1px solid #BBF7D0", borderRadius: 8, padding: "12px 16px", display: "flex", alignItems: "center", gap: 8 }}>
-              <Check size={16} color="#1B4332" strokeWidth={2} />
-              <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, color: "#1B4332" }}>Sent to {email}</span>
-            </div>
-          ) : (
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleEmail()}
-                style={{ flex: 1, padding: "11px 14px", border: "1.5px solid #E4DED6", borderRadius: 8, fontFamily: "'Inter',sans-serif", fontSize: 13, outline: "none", background: "#FAFAF7" }}
-              />
-              <button onClick={handleEmail} style={{ background: "linear-gradient(135deg,#D97706,#B45309)", border: "none", borderRadius: 8, padding: "0 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                <Mail size={14} color="#fff" strokeWidth={1.75} />
-                <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 600, color: "#fff" }}>Send</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        <button onClick={onClose} style={{ width: "100%", background: "none", border: "1.5px solid #E4DED6", borderRadius: 10, padding: "12px", fontFamily: "'Inter',sans-serif", fontSize: 13, color: "#6B7280", cursor: "pointer" }}>
-          Close
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
-
-export default function ComparisonTool() {
-  const [heating, setHeating]   = useState("gas");
-  const [size, setSize]         = useState("medium");
-  const [tariff, setTariff]     = useState("standard");
-  const [showShare, setShare]   = useState(false);
-  const [showEmail, setEmail]   = useState(false);
-  const [emailVal, setEmailVal] = useState("");
-  const [emailSent, setEmailSent] = useState(false);
-  const [activeTab, setActiveTab] = useState("chart");
-
-  const { data, netInstall, grant, crossover, boilerAnnual, hpAnnual } =
-    buildData(heating, size, tariff);
-
-  const yr15 = data[data.length - 1];
-  const saving15 = yr15.saving;
-  const annualSaving = boilerAnnual - hpAnnual;
-  const boilerInfo = HEATING_COSTS[heating];
-
-  const handleEmailSave = () => {
-    if (!emailVal.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) return;
-    setEmailSent(true);
-  };
+  const phaseLabel = s => s < 3 ? "Eligibility" : s < 5 ? "Cost Estimate" : "Your Location";
+  const phaseAccent = s => s < 3 ? "#1B4332" : s < 5 ? "#92400E" : "#1e3a5f";
 
   return (
-    <div style={{ minHeight: "100vh", background: "#FAFAF8", fontFamily: "'Inter',sans-serif" }}>
+    <div style={{ minHeight:"100vh", background:"linear-gradient(160deg,#F5F4EF 0%,#EEF2EE 50%,#F5F4EF 100%)", display:"flex", alignItems:"center", justifyContent:"center", padding:"32px 16px", fontFamily:"'Lora',serif" }}>
+      <h1 style={{ position:"absolute", width:1, height:1, overflow:"hidden", clip:"rect(0,0,0,0)", whiteSpace:"nowrap" }}>Heat Pump Grant Eligibility Check</h1>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
-        .seg { padding:8px 16px;border:1.5px solid #E4DED6;background:#fff;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;color:#6B7280;transition:all 0.2s;font-weight:500; }
-        .seg:first-child{border-radius:8px 0 0 8px}
-        .seg:last-child{border-radius:0 8px 8px 0}
-        .seg:not(:first-child){border-left:none}
-        .seg.on{background:#1B4332;border-color:#1B4332;color:#fff;z-index:1;position:relative}
-        .seg:hover:not(.on){background:#F0F9F4;border-color:#1B4332;color:#1B4332}
+        /* Text card — for property type and size (no icon) */
+        .tc {
+          width:100%; background:#FAFAF7; border:1.5px solid #E4DED6; border-radius:12px;
+          padding:15px 18px; cursor:pointer; text-align:left; transition:all 0.2s ease;
+          display:flex; align-items:center; justify-content:space-between; gap:12px;
+        }
+        .tc:hover { background:#F0F7F2; border-color:#1B4332; transform:translateX(3px); }
+        .tc.sel   { background:#F0F7F2; border-color:#1B4332; box-shadow:0 0 0 3px rgba(27,67,50,0.1); }
+        .tc.fade  { opacity:0.35; pointer-events:none; }
 
-        .card-sel{background:#fff;border:1.5px solid #E4DED6;border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.2s;text-align:left;width:100%}
-        .card-sel:hover{border-color:#1B4332;background:#F0F7F4}
-        .card-sel.on{border-color:#1B4332;background:#F0F7F4;box-shadow:0 0 0 3px rgba(27,67,50,0.1)}
+        /* Icon card — for heating, insulation etc */
+        .ic {
+          width:100%; background:#FAFAF7; border:1.5px solid #E4DED6; border-radius:12px;
+          padding:14px 18px; cursor:pointer; text-align:left; transition:all 0.2s ease;
+          display:flex; align-items:center; gap:14px;
+        }
+        .ic:hover { background:#F0F7F2; border-color:#1B4332; transform:translateX(3px); }
+        .ic.sel   { background:#F0F7F2; border-color:#1B4332; box-shadow:0 0 0 3px rgba(27,67,50,0.1); }
+        .ic.fade  { opacity:0.35; pointer-events:none; }
 
-        .tab-btn{padding:10px 20px;border:none;background:transparent;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;color:#9CA3AF;border-bottom:2px solid transparent;transition:all 0.2s}
-        .tab-btn.on{color:#1B4332;border-bottom-color:#1B4332}
+        .ic-wrap { width:42px; height:42px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:background 0.2s; }
+        .ic:hover .ic-wrap, .ic.sel .ic-wrap { background:#E0F0E8; }
+        .ic-wrap svg { color:#4B5563; transition:color 0.2s; }
+        .ic:hover .ic-wrap svg, .ic.sel .ic-wrap svg { color:#1B4332; }
 
-        .stat{background:#F8F5F0;border:1px solid #E4DED6;border-radius:12px;padding:16px;text-align:center}
-        .stat.green{background:linear-gradient(135deg,#F0FDF4,#DCFCE7);border-color:#86EFAC}
-        .stat.dark{background:linear-gradient(135deg,#0F2218,#1B4332)}
+        .prog-track { height:3px; background:#E8E3DB; border-radius:2px; overflow:hidden; }
+        .prog-fill  { height:100%; background:linear-gradient(90deg,#1B4332,#52B788); border-radius:2px; transition:width 0.5s cubic-bezier(0.4,0,0.2,1); }
 
-        .share-btn{display:flex;align-items:center;gap:8px;padding:11px 18px;border-radius:10px;border:1.5px solid #E4DED6;background:#fff;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:#374151;transition:all 0.2s}
-        .share-btn:hover{border-color:#1B4332;color:#1B4332;background:#F0F9F4}
+        .btn-cta { width:100%; background:linear-gradient(135deg,#D97706,#B45309); color:#fff; border:none; border-radius:12px; padding:16px 24px; font-family:'Inter',sans-serif; font-size:15px; font-weight:700; cursor:pointer; transition:all 0.2s; box-shadow:0 4px 16px rgba(180,83,9,0.28); }
+        .btn-cta:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(180,83,9,0.38); }
+        .btn-ghost { width:100%; background:none; border:1.5px solid #E4DED6; border-radius:10px; padding:12px 20px; font-family:'Inter',sans-serif; font-size:13px; color:#6B7280; cursor:pointer; transition:all 0.2s; }
+        .btn-ghost:hover { border-color:#9CA3AF; color:#374151; }
+        .back-btn { background:none; border:none; font-family:'Inter',sans-serif; font-size:12px; color:#9CA3AF; cursor:pointer; padding:0; transition:color 0.15s; display:flex; align-items:center; gap:4px; }
+        .back-btn:hover { color:#4B5563; }
 
-        @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-        .fu{animation:fadeUp 0.35s ease both}
+        .email-inp { width:100%; padding:14px 16px; border:1.5px solid #E4DED6; border-radius:10px; font-family:'Inter',sans-serif; font-size:15px; background:#FAFAF7; color:#111827; outline:none; transition:all 0.2s; }
+        .email-inp:focus { border-color:#1B4332; background:#fff; box-shadow:0 0 0 3px rgba(27,67,50,0.08); }
+        .email-inp.err { border-color:#EF4444; }
+        .text-inp { width:100%; padding:15px 18px; border:1.5px solid #E4DED6; border-radius:12px; font-family:'Inter',sans-serif; font-size:18px; font-weight:600; background:#FAFAF7; color:#111827; outline:none; text-transform:uppercase; letter-spacing:0.08em; text-align:center; transition:all 0.2s; }
+        .text-inp:focus { border-color:#1B4332; background:#fff; box-shadow:0 0 0 3px rgba(27,67,50,0.08); }
+        .text-inp.err { border-color:#EF4444; }
 
-        @media(max-width:768px){
-          .layout{grid-template-columns:1fr !important}
-          .stats-row{grid-template-columns:1fr 1fr !important}
-          .heat-grid{grid-template-columns:1fr 1fr !important}
+        .stat-box { background:#F8F5F0; border:1px solid #E4DED6; border-radius:12px; padding:16px 18px; text-align:center; }
+        .stat-box.hi { background:linear-gradient(135deg,#F0FDF4,#DCFCE7); border-color:#86EFAC; }
+        .stat-box.lock { position:relative; overflow:hidden; }
+        .stat-box.lock::after { content:''; position:absolute; inset:0; background:rgba(255,255,255,0.72); backdrop-filter:blur(3px); border-radius:11px; }
+
+        @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        .fu { animation:fadeUp 0.3s ease both; }
+        @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+        @media(max-width:520px) {
+          .prog-track { margin-bottom: 18px; }
+          .stat-box { padding: 12px 14px; }
+          .btn-cta { font-size: 14px; padding: 14px 20px; }
+          .tc, .ic { padding: 12px 14px; }
         }
       `}</style>
 
-      {/* Nav */}
-      <nav style={{ background: "rgba(250,250,248,0.95)", backdropFilter: "blur(12px)", borderBottom: "1px solid #E8E3DB", padding: "0 28px", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, background: "linear-gradient(135deg,#1B4332,#2D6A4F)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg viewBox="0 0 64 64" width="17" height="17" aria-hidden="true" style={{ flexShrink: 0 }}><rect x="0" y="0" width="64" height="64" rx="14" fill="rgba(255,255,255,0.15)"/><rect x="10" y="23" width="44" height="18" rx="9" fill="rgba(255,255,255,0.2)"/><circle cx="45" cy="32" r="7" fill="white"/><circle cx="19" cy="32" r="2.5" fill="rgba(255,255,255,0.35)"/></svg>
-            </div>
-            <span style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: 16, color: "#111827" }}>
-              BoilerSwitch<span style={{ fontFamily: "'Inter',sans-serif", fontSize: 12, color: "#9CA3AF", fontWeight: 400 }}>.co.uk</span>
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="share-btn" onClick={() => setShare(true)}>
-              <Share2 size={14} strokeWidth={1.75} />
-              Share comparison
-            </button>
-          </div>
-        </div>
-      </nav>
+      <div style={{ background:"#fff", borderRadius:22, border:"1px solid #E4DED6", boxShadow:"0 8px 48px rgba(0,0,0,0.09)", width:"100%", maxWidth:500, overflow:"hidden" }}>
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px" }}>
+        {/* Accent bar */}
+        <div style={{ height:4, background: phase === "tool" ? `linear-gradient(90deg,${phaseAccent(step)},${phaseAccent(step)}99)` : phase === "confirmed" ? "linear-gradient(90deg,#D97706,#F59E0B)" : "linear-gradient(90deg,#1B4332,#52B788)", transition:"background 0.4s" }} />
 
-        {/* Header */}
-        <div style={{ marginBottom: 36, textAlign: "center" }} className="fu">
-          <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 700, color: "#1B4332", textTransform: "uppercase", letterSpacing: "0.12em", background: "#F0F9F4", padding: "3px 12px", borderRadius: 20, display: "inline-block", marginBottom: 14 }}>
-            Interactive Comparison
-          </span>
-          <h1 style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: "clamp(24px,4vw,40px)", color: "#0F1F17", lineHeight: 1.15, marginBottom: 10, letterSpacing: "-0.01em" }}>
-            Heat pump vs your boiler —<br />
-            <span style={{ color: "#1B4332", fontStyle: "italic" }}>what's the real cost over 15 years?</span>
-          </h1>
-          <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 15, color: "#6B7280", maxWidth: 520, margin: "0 auto", lineHeight: 1.65 }}>
-            Adjust the settings to match your home. The chart updates in real time.
-          </p>
-        </div>
+        <div style={{ padding:"28px 30px" }}>
 
-        <div className="layout" style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 28, alignItems: "start" }}>
+          {/* ── TOOL ── */}
+          {phase === "tool" && (
+            <div className="fu" key={step}>
 
-          {/* ── Controls ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {/* Header */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:18 }}>
+                <div>
+                  <span style={{ fontFamily:"'Inter',sans-serif", fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color:phaseAccent(step), background:`${phaseAccent(step)}12`, padding:"2px 9px", borderRadius:4 }}>
+                    {phaseLabel(step)}
+                  </span>
+                  <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#9CA3AF", marginTop:5 }}>Step {step+1} of {total}</p>
+                </div>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:700, color:"#1B4332" }}>{pct}%</span>
+              </div>
 
-            {/* Heating system */}
-            <div style={{ background: "#fff", border: "1px solid #E4DED6", borderRadius: 16, padding: 20 }}>
-              <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 700, color: "#1B4332", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14 }}>Your heating system</p>
-              <div className="heat-grid" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
-                {Object.entries(HEATING_COSTS).map(([key, val]) => (
-                  <button key={key} className={`card-sel ${heating === key ? "on" : ""}`} onClick={() => setHeating(key)}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 36, height: 36, background: `${val.colour}15`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {val.icon}
-                      </div>
+              {/* Progress */}
+              <div className="prog-track" style={{ marginBottom:24 }}>
+                <div className="prog-fill" style={{ width:`${pct}%` }} />
+              </div>
+
+              {/* Question */}
+              <h2 style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:20, color:"#111827", lineHeight:1.25, marginBottom:5 }}>{cur.question}</h2>
+              {cur.hint && <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#9CA3AF", marginBottom:20, lineHeight:1.5 }}>{cur.hint}</p>}
+
+              {/* Text cards (property type & size) */}
+              {cur.textCards && (
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  {cur.options.map(o => (
+                    <button
+                      key={o.value}
+                      className={`tc ${selecting===o.value?"sel":""} ${selecting&&selecting!==o.value?"fade":""}`}
+                      onClick={() => pick(o.value)}
+                      aria-label={o.label}
+                    >
                       <div>
-                        <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, fontWeight: 600, color: "#111827" }}>{val.label}</p>
-                        <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#9CA3AF" }}>{fmt(val.annual)}/yr avg running cost</p>
+                        <p style={{ fontFamily:"'Inter',sans-serif", fontSize:14, fontWeight:600, color:"#111827", marginBottom:2 }}>{o.label}</p>
+                        <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#9CA3AF" }}>{o.desc}</p>
                       </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Property size */}
-            <div style={{ background: "#fff", border: "1px solid #E4DED6", borderRadius: 16, padding: 20 }}>
-              <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 700, color: "#1B4332", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14 }}>Property size</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {Object.entries(INSTALL_COST).map(([key, val]) => (
-                  <button key={key} className={`card-sel ${size === key ? "on" : ""}`} onClick={() => setSize(key)}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, fontWeight: 600, color: "#111827" }}>{val.label}</span>
-                      <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#9CA3AF" }}>{fmt(val.low)}–{fmt(val.high)}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Electricity tariff */}
-            <div style={{ background: "#fff", border: "1px solid #E4DED6", borderRadius: 16, padding: 20 }}>
-              <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 700, color: "#1B4332", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14 }}>Electricity tariff</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {Object.entries(HP_RUNNING).map(([key, val]) => (
-                  <button key={key} className={`card-sel ${tariff === key ? "on" : ""}`} onClick={() => setTariff(key)}>
-                    <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 2 }}>{val.label}</p>
-                    <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#9CA3AF" }}>{val.note}</p>
-                  </button>
-                ))}
-              </div>
-              <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: "10px 12px", marginTop: 12, display: "flex", gap: 8, alignItems: "flex-start" }}>
-                <Lightbulb size={14} color="#92400E" strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 1 }} />
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#78350F", lineHeight: 1.55 }}>
-                  Heat pump-specific tariffs from Octopus, E.ON and EDF can cut running costs by 20–30%.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* ── Results ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-            {/* Key stats */}
-            <div className="stats-row fu" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }} key={`${heating}-${size}-${tariff}`}>
-              <div className="stat green">
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 9, color: "#166534", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Grant available</p>
-                <p style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: 26, color: "#1B4332", lineHeight: 1 }}>{fmt(grant)}</p>
-              </div>
-              <div className="stat">
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 9, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Your net cost</p>
-                <p style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: 22, color: "#111827", lineHeight: 1 }}>{fmt(netInstall)}</p>
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 10, color: "#9CA3AF", marginTop: 3 }}>after grant</p>
-              </div>
-              <div className="stat">
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 9, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Annual saving</p>
-                <p style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: 22, color: annualSaving > 0 ? "#1B4332" : "#EF4444", lineHeight: 1 }}>{fmt(annualSaving)}</p>
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 10, color: "#9CA3AF", marginTop: 3 }}>vs {boilerInfo.label}</p>
-              </div>
-              <div className={`stat ${crossover ? "dark" : ""}`}>
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 9, color: crossover ? "#6EE7B7" : "#6B7280", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Break even</p>
-                <p style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: 22, color: crossover ? "#fff" : "#EF4444", lineHeight: 1 }}>
-                  {crossover ? `Year ${crossover.yr}` : ">15 yrs"}
-                </p>
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 10, color: crossover ? "#A7F3D0" : "#9CA3AF", marginTop: 3 }}>
-                  {crossover ? "heat pump wins" : "boiler cheaper"}
-                </p>
-              </div>
-            </div>
-
-            {/* Chart / table tabs */}
-            <div style={{ background: "#fff", border: "1px solid #E4DED6", borderRadius: 16, overflow: "hidden" }}>
-              <div style={{ display: "flex", borderBottom: "1px solid #E4DED6", padding: "0 20px" }}>
-                {[
-                  { id: "chart", label: "Chart",  Icon: BarChart2 },
-                  { id: "table", label: "Table",  Icon: Table },
-                ].map(({ id, label, Icon }) => (
-                  <button key={id} className={`tab-btn ${activeTab === id ? "on" : ""}`} onClick={() => setActiveTab(id)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <Icon size={14} strokeWidth={1.75} />
-                    {label}
-                  </button>
-                ))}
-                <div style={{ flex: 1 }} />
-                <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "0 4px" }}>
-                  {[
-                    { colour: "#ef4444", label: boilerInfo.label },
-                    { colour: "#4ade80", label: "Heat pump" },
-                  ].map(({ colour, label }) => (
-                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={{ width: 24, height: 3, background: colour, borderRadius: 2 }} />
-                      <span style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#6B7280" }}>{label}</span>
-                    </div>
+                      <span style={{ color:"#D1D5DB", fontSize:18, flexShrink:0 }}>›</span>
+                    </button>
                   ))}
                 </div>
-              </div>
+              )}
 
-              <div style={{ padding: "24px 20px" }}>
-                {activeTab === "chart" && (
-                  <div className="fu" key={`chart-${heating}-${size}-${tariff}`}>
-                    <ResponsiveContainer width="100%" height={280}>
-                      <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="boilerGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#ef4444" stopOpacity={0.02} />
-                          </linearGradient>
-                          <linearGradient id="hpGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#4ade80" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#4ade80" stopOpacity={0.02} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F0EBE3" />
-                        <XAxis dataKey="year" tick={{ fontFamily: "'Inter',sans-serif", fontSize: 10, fill: "#9CA3AF" }} axisLine={{ stroke: "#E8E3DB" }} tickLine={false} />
-                        <YAxis tick={{ fontFamily: "'Inter',sans-serif", fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} tickFormatter={v => `£${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
-                        <Tooltip content={<CustomTooltip boilerLabel={boilerInfo.label} />} />
-                        {crossover && (
-                          <ReferenceLine x={crossover.year} stroke="#1B4332" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "Break even", position: "top", fontSize: 10, fill: "#1B4332", fontFamily: "'Inter',sans-serif" }} />
-                        )}
-                        <Area type="monotone" dataKey="boiler" name={boilerInfo.label} stroke="#ef4444" strokeWidth={2} fill="url(#boilerGrad)" dot={false} activeDot={{ r: 4, fill: "#ef4444" }} />
-                        <Area type="monotone" dataKey="heatpump" name="Heat pump" stroke="#4ade80" strokeWidth={2} fill="url(#hpGrad)" dot={false} activeDot={{ r: 4, fill: "#1B4332" }} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                    <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11, color: "#C4BDB5", textAlign: "center", marginTop: 8 }}>
-                      Includes boiler replacement at year 10 (est. £2,200). All figures are estimates — get quotes for your actual cost.
-                    </p>
-                  </div>
-                )}
+              {/* Icon cards (heating, insulation, benefits) */}
+              {!cur.textCards && !cur.isText && (
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  {cur.options.map(o => (
+                    <button
+                      key={o.value}
+                      className={`ic ${selecting===o.value?"sel":""} ${selecting&&selecting!==o.value?"fade":""}`}
+                      onClick={() => pick(o.value)}
+                      aria-label={o.label}
+                    >
+                      <div className="ic-wrap" style={{ background:"#F0EBE3" }}>
+                        {IC[o.icon]}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontFamily:"'Inter',sans-serif", fontSize:14, fontWeight:600, color:"#111827", marginBottom:2 }}>{o.label}</p>
+                        <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#9CA3AF" }}>{o.note}</p>
+                      </div>
+                      <span style={{ color:"#D1D5DB", fontSize:18, flexShrink:0 }}>›</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-                {activeTab === "table" && (
-                  <div className="fu" key={`table-${heating}-${size}-${tariff}`} style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Inter',sans-serif", fontSize: 13 }}>
-                      <thead>
-                        <tr>
-                          {["Year", boilerInfo.label, "Heat pump", "Difference"].map(h => (
-                            <th key={h} style={{ padding: "10px 14px", background: "#1B4332", color: "#fff", textAlign: "left", fontSize: 12, fontWeight: 600, fontFamily: "'Inter',sans-serif", letterSpacing: "0.04em" }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.filter(d => d.yr % 3 === 0 || d.yr === 1).map((row, i) => (
-                          <tr key={row.yr} style={{ background: i % 2 === 0 ? "#fff" : "#F8F5F0" }}>
-                            <td style={{ padding: "10px 14px", fontFamily: "'Inter',sans-serif", fontSize: 12, color: "#374151" }}>{row.year}</td>
-                            <td style={{ padding: "10px 14px", color: "#ef4444", fontWeight: 600 }}>{fmt(row.boiler)}</td>
-                            <td style={{ padding: "10px 14px", color: "#1B4332", fontWeight: 600 }}>{fmt(row.heatpump)}</td>
-                            <td style={{ padding: "10px 14px", color: row.saving >= 0 ? "#1B4332" : "#ef4444", fontWeight: 700 }}>
-                              {row.saving >= 0 ? `+${fmt(row.saving)}` : fmt(row.saving)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 15 year verdict */}
-            <div style={{ background: saving15 > 0 ? "linear-gradient(135deg,#0F2218,#1B4332)" : "linear-gradient(135deg,#2a1010,#3a1515)", borderRadius: 16, padding: "24px 28px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 20 }}>
-              <div>
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 10, color: saving15 > 0 ? "#6EE7B7" : "#f87171", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
-                  Over 15 years, a heat pump
-                </p>
-                <p style={{ fontFamily: "'Lora',serif", fontWeight: 700, fontSize: "clamp(18px,3vw,26px)", color: "#fff", lineHeight: 1.2 }}>
-                  {saving15 > 0
-                    ? `saves you ${fmt(saving15)} vs your ${boilerInfo.label}`
-                    : `costs ${fmt(Math.abs(saving15))} more than keeping your ${boilerInfo.label}`}
-                </p>
-                {crossover && (
-                  <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, color: "#A7F3D0", marginTop: 8 }}>
-                    You break even at year {crossover.yr} — then it's pure savings from there.
-                  </p>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
-                <a href="/get-quotes" style={{ background: "linear-gradient(135deg,#D97706,#B45309)", color: "#fff", border: "none", borderRadius: 10, padding: "14px 24px", fontFamily: "'Inter',sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(180,83,9,0.35)", textDecoration: "none", display: "inline-block", textAlign: "center" }}>
-                  Get quotes for your home →
-                </a>
-                <button className="share-btn" onClick={() => setShare(true)} style={{ justifyContent: "center" }}>
-                  <Share2 size={14} strokeWidth={1.75} />
-                  Save this comparison
-                </button>
-              </div>
-            </div>
-
-            {/* Email save strip */}
-            {!emailSent ? (
-              <div style={{ background: "#fff", border: "1px solid #E4DED6", borderRadius: 14, padding: "18px 20px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                <Mail size={18} color="#1B4332" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, color: "#374151", flex: 1, minWidth: 160 }}>
-                  <strong>Email me this comparison</strong> — I'll also send you our guide on choosing the right installer.
-                </p>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                  <input
-                    type="email"
-                    placeholder="your@email.com"
-                    value={emailVal}
-                    onChange={e => setEmailVal(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && handleEmailSave()}
-                    style={{ padding: "10px 14px", border: "1.5px solid #E4DED6", borderRadius: 8, fontFamily: "'Inter',sans-serif", fontSize: 13, outline: "none", width: 200, background: "#FAFAF7" }}
+              {/* Postcode input */}
+              {cur.isText && (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  <input className={`text-inp ${postcodeError?"err":""}`} type="text" placeholder={cur.placeholder}
+                    value={postcodeInput} maxLength={8} autoFocus
+                    onChange={e => { setPostcode(e.target.value.toUpperCase()); setPostcodeError(""); }}
+                    onKeyDown={e => e.key==="Enter" && submitPostcode()}
+                    aria-label="Postcode"
                   />
-                  <button onClick={handleEmailSave} style={{ background: "#1B4332", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontFamily: "'Inter',sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-                    Save
-                  </button>
+                  {postcodeError && <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#EF4444", textAlign:"center" }}>{postcodeError}</p>}
+                  <button className="btn-cta" onClick={submitPostcode}>See My Results →</button>
+                </div>
+              )}
+
+              {/* Back */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:18 }}>
+                {step > 0
+                  ? <button className="back-btn" onClick={() => { setStep(step-1); setSelecting(null); setPostcodeError(""); }}>← Back</button>
+                  : <span />
+                }
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#C4BDB5", display:"flex", alignItems:"center", gap:4 }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Your data is safe</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── PARTIAL RESULT ── */}
+          {phase === "partial" && (
+            <div className="fu">
+              <div style={{ textAlign:"center", marginBottom:22 }}>
+                <div className={`pop`} style={{ width:60, height:60, borderRadius:"50%", background: eligible?"linear-gradient(135deg,#D1FAE5,#A7F3D0)":"#FEF3C7", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", fontSize:26 }}>
+                  {eligible ? <CheckCircle2 size={28} color="#166534" strokeWidth={1.75} /> : <Lightbulb size={28} color="#92400E" strokeWidth={1.75} />}
+                </div>
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.12em", color: eligible?"#166534":"#92400E", marginBottom:6 }}>
+                  {eligible ? "You likely qualify" : "Alternative options available"}
+                </p>
+                <h2 style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:22, color:"#111827", lineHeight:1.2, marginBottom:6 }}>
+                  {eligible ? `You may qualify for ${fmt(grant)} off` : "Let's find the right path for your home"}
+                </h2>
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#6B7280", lineHeight:1.55 }}>
+                  {eligible ? "Based on your answers, you're likely eligible for the Boiler Upgrade Scheme grant." : "The BUS grant may not apply, but other funding routes are available."}
+                </p>
+              </div>
+
+              {/* Stats */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+                <div className={`stat-box hi`} style={{ gridColumn: eligible?"1":"1/-1" }}>
+                  <p style={{ fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color: eligible?"#166534":"#92400E", marginBottom:4 }}>BUS Grant</p>
+                  <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:28, color: eligible?"#1B4332":"#92400E" }}>{eligible ? fmt(grant) : "Not eligible"}</p>
+                  {!eligible && <p style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#92400E", marginTop:3 }}>ECO4 may still apply</p>}
+                </div>
+                {eligible && (
+                  <div className="stat-box">
+                    <p style={{ fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color:"#6B7280", marginBottom:4 }}>Est. Install Cost</p>
+                    <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:18, color:"#374151" }}>{fmt(cLo)}–{fmt(cHi)}</p>
+                    <p style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#9CA3AF", marginTop:2 }}>before grant</p>
+                  </div>
+                )}
+                <div className="stat-box lock">
+                  <p style={{ fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color:"#6B7280", marginBottom:4 }}>Your Net Cost</p>
+                  <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:18, color:"#374151" }}>{fmt(netLo)}–{fmt(netHi)}</p>
+                </div>
+                <div className="stat-box lock">
+                  <p style={{ fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color:"#6B7280", marginBottom:4 }}>Annual Savings</p>
+                  <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:18, color:"#374151" }}>{fmt(sLo)}–{fmt(sHi)}</p>
                 </div>
               </div>
-            ) : (
-              <div style={{ background: "#F0F9F4", border: "1px solid #BBF7D0", borderRadius: 14, padding: "16px 20px", display: "flex", alignItems: "center", gap: 10 }}>
-                <Check size={18} color="#1B4332" strokeWidth={2} />
-                <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13, color: "#1B4332" }}>
-                  <strong>Sent to {emailVal}</strong> — check your inbox. We've also added you to the BoilerSwitch newsletter (unsubscribe anytime).
+
+              {/* Lock explanation */}
+              <div style={{ background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:10, padding:"11px 15px", display:"flex", gap:10, alignItems:"flex-start", marginBottom:16 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#78350F", lineHeight:1.55 }}>
+                  <strong>Unlock your full result</strong> — enter your email to see your {eligible?"net cost after grant, ":""}annual savings{payback?`, ${payback}-year payback,`:""} and get 3 free quotes from local MCS installers.
                 </p>
               </div>
-            )}
 
-          </div>
+              <button className="btn-cta" onClick={() => setPhase("email")}>Unlock Full Result & Get Free Quotes →</button>
+              <button className="btn-ghost" style={{ marginTop:9 }} onClick={() => setPhase("confirmed")}>Skip — just show me my result</button>
+              <button className="back-btn" style={{ margin:"12px auto 0", display:"block" }} onClick={() => { setPhase("tool"); setStep(total-1); }}>← Start again</button>
+            </div>
+          )}
+
+          {/* ── EMAIL ── */}
+          {phase === "email" && (
+            <div className="fu">
+              <div style={{ textAlign:"center", marginBottom:22 }}>
+                <div style={{ width:56, height:56, background:"linear-gradient(135deg,#F0F9F4,#DCFCE7)", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px" }}><Mail size={26} color="#1B4332" strokeWidth={1.75} /></div>
+                <h2 style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:21, color:"#111827", marginBottom:8, lineHeight:1.25 }}>Where should we send your full result?</h2>
+                <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#6B7280", lineHeight:1.6 }}>
+                  We'll email your personalised cost breakdown and match you with up to 3 MCS-certified installers near {answers.postcode || "you"}.
+                </p>
+              </div>
+
+              {/* Teaser */}
+              <div style={{ background:"linear-gradient(135deg,#F0FDF4,#DCFCE7)", border:"1px solid #BBF7D0", borderRadius:11, padding:"13px 17px", display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+                <div>
+                  <p style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#166534", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em" }}>Your BUS grant</p>
+                  <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:22, color:"#1B4332" }}>{eligible ? fmt(grant) : "Alt route"}</p>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <p style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#6B7280", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em" }}>Net cost</p>
+                  <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:17, color:"#374151", display:"flex", alignItems:"center", gap:5 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{fmt(netLo)}–{fmt(netHi)}</p>
+                </div>
+              </div>
+
+              <div style={{ marginBottom:11 }}>
+                <input className={`email-inp ${emailError?"err":""}`} type="email" placeholder="your@email.com" value={email} autoFocus
+                  onChange={e => { setEmail(e.target.value); setEmailError(""); }}
+                  onKeyDown={e => e.key==="Enter" && submitEmail()}
+                  aria-label="Email address"
+                />
+                {emailError && <p style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#EF4444", marginTop:5 }}>{emailError}</p>}
+              </div>
+
+              <button className="btn-cta" onClick={submitEmail}>See My Full Result & Get Quotes →</button>
+              <div style={{ display:"flex", justifyContent:"center", gap:16, marginTop:11 }}>
+                {["Email contact only","Max 3 installers","Unsubscribe anytime"].map(t => (
+                  <span key={t} style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#C4BDB5" }}>{t}</span>
+                ))}
+              </div>
+              <button className="back-btn" style={{ margin:"12px auto 0", display:"block" }} onClick={() => setPhase("partial")}>← Back to my result</button>
+            </div>
+          )}
+
+          {/* ── CONFIRMED ── */}
+          {phase === "confirmed" && (
+            <div className="fu">
+              {email ? (
+                <>
+                  <div style={{ textAlign:"center", marginBottom:22 }}>
+                    <div className="pop" style={{ width:64, height:64, borderRadius:"50%", background:"linear-gradient(135deg,#D1FAE5,#A7F3D0)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}><CheckCircle2 size={30} color="#1B4332" strokeWidth={2} /></div>
+                    <h2 style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:21, color:"#111827", marginBottom:8 }}>Your full result is on its way</h2>
+                    <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#6B7280", lineHeight:1.6 }}>
+                      We've sent a summary to <strong>{email}</strong>. Everything unlocked:
+                    </p>
+                  </div>
+
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+                    {[
+                      { label:"BUS Grant",      value: eligible?fmt(grant):"N/A",          hi:eligible },
+                      { label:"Install Cost",   value:`${fmt(cLo)}–${fmt(cHi)}`,           hi:false },
+                      { label:"Your Net Cost",  value:`${fmt(netLo)}–${fmt(netHi)}`,        hi:false },
+                      { label:"Annual Savings", value:`${fmt(sLo)}–${fmt(sHi)}`,           hi:false },
+                    ].map(({ label, value, hi }) => (
+                      <div key={label} className={`stat-box ${hi?"hi":""}`}>
+                        <p style={{ fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color: hi?"#166534":"#6B7280", marginBottom:4 }}>{label}</p>
+                        <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize: hi?24:17, color: hi?"#1B4332":"#374151" }}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {payback && (
+                    <div style={{ background:"#F0F9F4", border:"1px solid #BBF7D0", borderRadius:10, padding:"11px 16px", textAlign:"center", marginBottom:18 }}>
+                      <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#166534" }}>
+                        <span style={{display:"flex",alignItems:"center",gap:6}}><TrendingUp size={15} color="#166534" strokeWidth={1.75} /><span>Estimated payback: <strong>{payback} years</strong> — then pure savings</span></span>
+                      </p>
+                    </div>
+                  )}
+
+                  <div style={{ background:"#F8F5F0", borderRadius:11, padding:"16px 18px", marginBottom:16 }}>
+                    <p style={{ fontFamily:"'Inter',sans-serif", fontSize:10, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>What happens next</p>
+                    {[
+                      [<ClipboardList size={14} color="#fff" strokeWidth={1.75} />, `MCS installers near ${answers.postcode||"you"} review your details`],
+                      [<MessageCircle size={14} color="#fff" strokeWidth={1.75} />, "You receive up to 3 personalised quotes within 24 hours"],
+                      [<CheckCircle2 size={14} color="#fff" strokeWidth={1.75} />, "Compare and choose — no obligation, no pressure"],
+                    ].map(([icon, text], i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:10, marginBottom: i<2?10:0 }}>
+                        <div style={{ width:26, height:26, background:"#1B4332", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:13 }}>{icon}</div>
+                        <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#374151", lineHeight:1.5, paddingTop:3 }}>{text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                /* Skipped email */
+                <>
+                  <div style={{ textAlign:"center", marginBottom:22 }}>
+                    <div style={{ width:52, height:52, background:"#FEF3C7", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px" }}><Lightbulb size={24} color="#92400E" strokeWidth={1.75} /></div>
+                    <h2 style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:21, color:"#111827", marginBottom:8 }}>Your result</h2>
+                    <p style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#6B7280", lineHeight:1.6 }}>
+                      Enter your email to unlock the full breakdown and get 3 free quotes.
+                    </p>
+                  </div>
+                  <div style={{ marginBottom:16 }}>
+                    <div className={`stat-box hi`} style={{ marginBottom:10 }}>
+                      <p style={{ fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.1em", color: eligible?"#166534":"#92400E", marginBottom:4 }}>BUS Grant Available</p>
+                      <p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:30, color: eligible?"#1B4332":"#92400E" }}>{eligible?fmt(grant):"Not eligible"}</p>
+                    </div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                      <div className="stat-box lock"><p style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#6B7280", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>Net Cost</p><p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:16, color:"#374151" }}>Locked</p></div>
+                      <div className="stat-box lock"><p style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#6B7280", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>Savings</p><p style={{ fontFamily:"'Lora',serif", fontWeight:700, fontSize:16, color:"#374151" }}>Locked</p></div>
+                    </div>
+                  </div>
+                  <button className="btn-cta" onClick={() => setPhase("email")}>Unlock Full Result — It's Free →</button>
+                </>
+              )}
+              <button className="back-btn" style={{ display:"block", margin:"12px auto 0" }} onClick={() => { setPhase("tool"); setStep(0); setAnswers({}); setEmail(""); setPostcode(""); }}>
+                ← Check another property
+              </button>
+            </div>
+          )}
+
+        </div>
+
+        {/* Trust strip */}
+        <div style={{ background:"#F8F5F0", borderTop:"1px solid #E4DED6", padding:"11px 28px", display:"flex", justifyContent:"center", gap:20, flexWrap:"wrap" }}>
+          {["GDPR Compliant","MCS Installers Only","Free to Use"].map(t => (
+            <span key={t} style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#9CA3AF" }}>{t}</span>
+          ))}
         </div>
       </div>
-
-      {/* Share modal */}
-      {showShare && <ShareModal onClose={() => setShare(false)} heating={heating} size={size} tariff={tariff} />}
     </div>
   );
 }
